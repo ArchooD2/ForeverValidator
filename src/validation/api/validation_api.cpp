@@ -138,7 +138,9 @@ ValidationError AllocationError(
 }
 
 
-bool IsCudaSupportedRoute(const ReplayAssetRoute &route) noexcept {
+bool IsCudaSupportedRoute(
+        const ReplayAssetRoute &route,
+        SimulationBackend backend) noexcept {
     const bool stadium =
             route.mapEnvironment == ReplayMapEnvironment::Stadium &&
             route.vehicleModel == ReplayVehicleModel::StadiumCar;
@@ -151,8 +153,13 @@ bool IsCudaSupportedRoute(const ReplayAssetRoute &route) noexcept {
             route.mapEnvironment == ReplayMapEnvironment::Alpine &&
             route.vehicleModel == ReplayVehicleModel::SnowCar;
 
+    const bool bay =
+            backend == SimulationBackend::Cuda &&
+            route.mapEnvironment == ReplayMapEnvironment::Bay &&
+            route.vehicleModel == ReplayVehicleModel::BayCar;
+
     return route.mapEnvironment == route.decorationEnvironment &&
-           (stadium || speed || snow);
+           (stadium || speed || snow || bay);
 }
 
 
@@ -1170,7 +1177,7 @@ Result<ValidationReport> RunReplayValidation(
     }
     if ((options.backend == SimulationBackend::Cuda ||
          options.backend == SimulationBackend::Hip) &&
-        !IsCudaSupportedRoute(route)) {
+        !IsCudaSupportedRoute(route, options.backend)) {
         return Result<ValidationReport>::Failure(
                 CudaScopeError(route, identity, options.backend));
     }
@@ -2474,9 +2481,11 @@ simulation::CudaSearchInputEvent CudaInput(
     result.valueKind = static_cast<std::uint32_t>(source.value.kind);
     if (source.value.kind == PhysicsSandboxInputValueKind::Analog) {
         result.value = source.value.analog;
-    } else {
+    } else if (source.value.kind == PhysicsSandboxInputValueKind::Switch) {
+        // Search uses binary switch values. Both pressed encodings are active.
         result.value =
-                static_cast<std::int32_t>(source.value.switchState);
+                source.value.switchState == PhysicsSandboxSwitchState::Released
+                ? 0 : 1;
     }
     return result;
 }
@@ -2610,7 +2619,7 @@ PhysicsSandboxResult<PhysicsSandboxStateView> PhysicsSandbox::LoadScenarioFile(
         }
         if ((impl_->options.backend == SimulationBackend::Cuda ||
              impl_->options.backend == SimulationBackend::Hip) &&
-            !IsCudaSupportedRoute(route)) {
+            !IsCudaSupportedRoute(route, impl_->options.backend)) {
             return PhysicsSandboxResult<PhysicsSandboxStateView>::Failure(
                     SandboxError(
                             PhysicsSandboxErrorCode::SimulationFailed,
